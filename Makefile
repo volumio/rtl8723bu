@@ -1,4 +1,7 @@
-FW_DIR	:= /lib/firmware/rtl_bt
+INSTALL_FW_PATH = $(INSTALL_MOD_PATH)/lib/firmware
+FW_DIR	:= $(INSTALL_FW_PATH)/rtl_bt
+
+DEPMOD  = /sbin/depmod
 
 EXTRA_CFLAGS += $(USER_EXTRA_CFLAGS)
 EXTRA_CFLAGS += -O1
@@ -15,7 +18,7 @@ EXTRA_CFLAGS += -Wno-unused-label
 EXTRA_CFLAGS += -Wno-unused-parameter
 EXTRA_CFLAGS += -Wno-unused-function
 EXTRA_CFLAGS += -Wno-unused
-EXTRA_CFLAGS += -DCONFIG_CONCURRENT_MODE
+#EXTRA_CFLAGS += -DCONFIG_CONCURRENT_MODE
 
 ccflags-y += -D__CHECK_ENDIAN__
 
@@ -30,7 +33,7 @@ CONFIG_AUTOCFG_CP = n
 ########################## WIFI IC ############################
 CONFIG_RTL8723B = y
 ########################## Features ###########################
-CONFIG_POWER_SAVING = y
+CONFIG_POWER_SAVING = n
 CONFIG_USB_AUTOSUSPEND = n
 CONFIG_HW_PWRP_DETECTION = n
 CONFIG_WIFI_TEST = n
@@ -53,7 +56,9 @@ CONFIG_PNO_SUPPORT = n
 CONFIG_PNO_SET_DEBUG = n
 CONFIG_AP_WOWLAN = n
 ###################### Platform Related #######################
-CONFIG_PLATFORM_I386_PC = y
+CONFIG_PLATFORM_I386_PC = n
+CONFIG_RASPBIAN = y
+CONFIG_PLATFORM_FS_MX61 = n
 ###############################################################
 
 CONFIG_DRVEXT_MODULE = n
@@ -101,7 +106,18 @@ _OUTSRC_FILES := hal/odm_debug.o	\
 		
 EXTRA_CFLAGS += -I$(src)/platform
 _PLATFORM_FILES := platform/platform_ops.o
-
+ifeq ($(CONFIG_RASPBIAN), y)
+EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN
+EXTRA_CFLAGS += -DCONFIG_IOCTL_CFG80211
+EXTRA_CFLAGS += -DRTW_USE_CFG80211_STA_EVENT # only enable when kernel >= 3.2
+EXTRA_CFLAGS += -DCONFIG_P2P_IPS
+ARCH := arm
+CROSS_COMPILE := arm-linux-gnueabihf-
+KVER := $(shell uname -r)
+KSRC ?= /lib/modules/$(KVER)/build
+MODULE_NAME := 8723bu
+MODDESTDIR := /lib/modules/$(KVER)/kernel/drivers/net/wireless/
+endif
 ifeq ($(CONFIG_BT_COEXIST), y)
 EXTRA_CFLAGS += -I$(src)/hal
 _OUTSRC_FILES += hal/HalBtc8723b1Ant.o \
@@ -258,10 +274,20 @@ ARCH ?= $(SUBARCH)
 CROSS_COMPILE ?=
 KVER  := $(shell uname -r)
 KSRC := /lib/modules/$(KVER)/build
-MODDESTDIR := /lib/modules/$(KVER)/kernel/drivers/net/wireless/
+MODDESTDIR := $(INSTALL_MOD_PATH)/lib/modules/$(KVER)/kernel/drivers/net/wireless/
 INSTALL_PREFIX :=
 endif
 
+ifeq ($(CONFIG_PLATFORM_FS_MX61), y)
+EXTRA_CFLAGS += -DCONFIG_IOCTL_CFG80211
+EXTRA_CFLAGS += -DRTW_USE_CFG80211_STA_EVENT # only enable when kernel >= 3.2
+EXTRA_CFLAGS += -DCONFIG_P2P_IPS
+EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN -Wno-error=date-time
+ARCH := arm
+KSRC ?= $(KERNEL_SRC)
+MODDESTDIR := kernel/drivers/net/wireless/
+LICENSE = "GPLv2"
+endif
 
 ifneq ($(USER_MODULE_NAME),)
 MODULE_NAME := $(USER_MODULE_NAME)
@@ -309,11 +335,9 @@ $(MODULE_NAME)-y += $(_HAL_INTFS_FILES)
 $(MODULE_NAME)-y += $(_OUTSRC_FILES)
 $(MODULE_NAME)-y += $(_PLATFORM_FILES)
 
-obj-$(CONFIG_RTL8723BU) := $(MODULE_NAME).o
+obj-m := $(MODULE_NAME).o
 
 else
-
-export CONFIG_RTL8723BU = m
 
 all: modules
 
@@ -324,14 +348,16 @@ strip:
 	$(CROSS_COMPILE)strip $(MODULE_NAME).ko --strip-unneeded
 
 install:
-	install -p -m 644 $(MODULE_NAME).ko  $(MODDESTDIR)
-	/sbin/depmod -a ${KVER}
-	mkdir -p $(FW_DIR)
-	cp -f rtl8723b_fw.bin $(FW_DIR)/rtl8723b_fw.bin
+	install -p -m 644 -D $(MODULE_NAME).ko $(MODDESTDIR)$(MODULE_NAME).ko
+	$(DEPMOD)  -a ${KVER}
+	install rtl8723b_fw.bin -D $(FW_DIR)/rtl8723b_fw.bin
+
+modules_install:
+	$(MAKE) INSTALL_MOD_DIR=$(MODDESTDIR) -C $(KSRC) M=$(shell pwd) modules_install
 
 uninstall:
-	rm -f $(MODDESTDIR)/$(MODULE_NAME).ko
-	/sbin/depmod -a ${KVER}
+	rm -f $(MODDESTDIR)$(MODULE_NAME).ko
+	$(DEPMOD) -a ${KVER}
 	rm -f $(FW_DIR)/rtl8723b_fw.bin
 
 config_r:
@@ -348,6 +374,6 @@ clean:
 	cd platform ; rm -fr *.mod.c *.mod *.o .*.cmd *.ko
 	rm -fr Module.symvers ; rm -fr Module.markers ; rm -fr modules.order
 	rm -fr *.mod.c *.mod *.o .*.cmd *.ko *~
-	rm -fr .tmp_versions
+	rm -fr .tmp_versions .cache.mk
 endif
 
